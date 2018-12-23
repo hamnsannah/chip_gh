@@ -1,0 +1,251 @@
+---
+title: "Comparison of Labor With Sales - 2018 through June 27"
+author: "Allocate Analytics"
+date: "July 17, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(sugrrants)
+library(knitr)
+library(lubridate)
+
+labor.agg.maker <- function(file.name){
+  #setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+  labor.data <- read.csv(paste0("data/",file.name), stringsAsFactors = FALSE)
+  dubdig <- function(x) if(nchar(x)==1){paste0(0,x)} else {x} #makes specified column double digits
+  labor.data$STARTHOUR <- sapply(labor.data$STARTHOUR, dubdig)
+  labor.data$Date.Time <- as_datetime(paste0(labor.data$DOB, " ", labor.data$STARTHOUR,
+                                             ":00:00"))
+  labor.data$Date <- as_date(labor.data$DOB)
+  
+  jobid.link <- read.csv("data/jobid.link.csv", stringsAsFactors = FALSE) # table with job names linked to IDs
+  
+  labor.merged <- merge(labor.data, jobid.link, 
+                        by.x = "JOBID", by.y = "ID", 
+                        all.x = TRUE, all.y = FALSE)
+  labor.agg <- aggregate(MINUTES ~ Date.Time + Date + LONGNAME, labor.merged, sum)
+  labor.agg$weekday <- wday(labor.agg$Date)
+  labor.agg$hour <- hour(labor.agg$Date.Time)
+  labor.agg
+}
+
+week.facet <- function(dataset, job.or.all = "all", light.color = "light blue", dark.color = "blue", 
+                       compare.sales = FALSE, dollars.checks.items = "checks"){
+  # needs data set that already has hour (1:24) and weekday (1:7) as columns
+  
+  library(ggplot2)
+  library(dplyr)
+  library(lubridate)
+  
+  hours.vec <- dataset$hour %>%
+    unique()
+  #print(hours.vec)
+  
+  hour.plot.data <- data.frame() # empty data frame to fil up
+  
+  if(job.or.all != "all"){
+    dataset <- filter(dataset, LONGNAME == job.or.all)
+  } else{ # this aggregates the minutes for all the job types, then adds the dropped column back in
+    dataset <- aggregate(MINUTES ~ Date.Time + Date + weekday + hour, dataset, sum)
+    dataset$LONGNAME <- "all"
+    dataset <- select(dataset, c(1,2,6,5,3,4))
+  }
+  
+  for(k in 1:7){
+    dataset.day <- filter(dataset, weekday == k)
+    
+    for(i in 1:length(hours.vec)){
+      sub.i <- filter(dataset.day, hour == hours.vec[i])
+      #print(head(sub.i, 2))
+      low.i <- quantile(sub.i$MINUTES, .125)
+      mean.i <- quantile(sub.i$MINUTES, .5)
+      high.i <- quantile(sub.i$MINUTES, .875)
+      sub.i.quant <- cbind(sub.i[1, c(3,5,6)], low.i, mean.i, high.i)
+      #print(sub.i.quant)
+      
+      hour.plot.data <- rbind(hour.plot.data, sub.i.quant)
+    }
+  }
+  
+  hour.plot.data <- hour.plot.data %>% 
+    filter(!is.na(weekday), weekday != 1) %>%
+    arrange(weekday)
+  days.df <- data.frame("weekday" = 1:7, "day" = c("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"))
+  days.df$day <- factor(days.df$day, levels = c("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"))
+hour.plot.data <- merge(hour.plot.data, days.df, all.x = TRUE, all.y = FALSE)  
+
+  if(compare.sales == TRUE){
+    
+    calibration.coef <- max(hour.plot.data$mean.i, na.rm = TRUE)/60 ### I calibrated sales (green) to sales, so this scales others to that (for 2016 at least)
+    
+    if(dollars.checks.items == "checks"){
+      #sales.quartiles <- read.csv("data/sales.quartiles.16.csv", stringsAsFactors = FALSE)
+      sales.quartiles <- read.csv("data/quants17checks2018-08-06.csv", stringsAsFactors = FALSE)
+      scale.ratio <- (48/calibration.coef) 
+      ### this parameter scales the sales data to be co-plotted with labor data, but it's different for each type
+    } else if(dollars.checks.items == "dollars"){
+      #sales.quartiles <- read.csv("data/sales.inliers.quartiles.16.csv", stringsAsFactors = FALSE)
+      sales.quartiles <- read.csv("data/quants17dollars2018-08-06.csv", stringsAsFactors = FALSE)
+      scale.ratio <- (7200/calibration.coef) # CHANGE FOR DOLLARS
+    } else if(dollars.checks.items == "items"){
+      #sales.quartiles <- read.csv("data/sales.item.quartiles.16.csv", stringsAsFactors = FALSE)
+      sales.quartiles <- read.csv("data/quants17items2018-08-06.csv", stringsAsFactors = FALSE)
+      scale.ratio <- (810/calibration.coef) #### CHANGE FOR ITEMS
+    }
+    
+    sales.quartiles <- filter(sales.quartiles, !is.na(weekday), weekday != 1)
+    sales.quartiles <- merge(sales.quartiles, days.df, all.x = TRUE, all.y = FALSE)
+  
+    facet.plot <- ggplot(data = hour.plot.data, aes(x=hour)) +
+      geom_ribbon(data = sales.quartiles, aes(ymin=(low.i/scale.ratio), ymax=(high.i/scale.ratio)), 
+                  fill = "light green", alpha = .35) +
+      geom_line(data = sales.quartiles, aes(y= mean.i/scale.ratio), size = 1, color = "green") +
+      
+      geom_ribbon(data = hour.plot.data, aes(ymin=(low.i/60), ymax=(high.i/60)), 
+                  fill = light.color, alpha = 0.35) +
+      geom_line(data = hour.plot.data, aes(y= mean.i/60), size = 1, color = dark.color) +
+      facet_grid(. ~ day) +
+      scale_y_continuous(sec.axis = sec_axis(~.*scale.ratio, name = paste0("Volume by ", dollars.checks.items)), 
+                         limits = c(0, NA)) +
+      labs(y= "Num. of Employees", x = "Hour of the Day") +
+      ggtitle(label = "Comparison of Sales vs Labor", 
+                subtitle = paste0("Sales based on ", dollars.checks.items, 
+                                  " and labor for job type ", job.or.all))+
+      scale_x_continuous(breaks = c(6,12,18,24), labels = c("6am", "12pm", "6pm", "12am" ))+
+      theme_dark()
+  } else { ### below is the code for plotting only the labor charts without sales ###
+    facet.plot <- ggplot(data=hour.plot.data, aes(x=hour)) +
+      geom_ribbon(aes(ymin=(low.i/60), ymax=(high.i/60)), fill = light.color, alpha = .5) +
+      geom_line(aes(y= mean.i/60), size = 1, color = dark.color) +
+      facet_grid(. ~ day) +
+      labs(y= "Num. of Employees", x = "Hour of the Day") +
+      ggtitle(label = "Hourly Labor Usage Throughout Week", 
+              subtitle = paste0("Hours shown for job type: ", job.or.all))+
+      scale_x_continuous(breaks = c(6,12,18,24), labels = c("6am", "12pm", "6pm", "12am" ))+
+      theme_dark()
+  }
+  #print(max(hour.plot.data$mean.i, na.rm = TRUE)/60)
+
+  facet.plot
+}
+
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+labor.agg <- labor.agg.maker("gndlbsum18.627.csv")
+
+```
+
+####Headlines - How 2018 Has Been Different From 2017
+
+- **The shape of sales through the week has stayed consistent in 2018 compared with 2017.**
+
+- **The scheduling of cooks is more consistent in 2018, with less variability.  The contrast is seen best on Saturday, where the pink bands are narrower.  For example in 2017, there were between 2 and 6 cooks on at noon 75% of the time, but in 2018 it's approximately 3-5 75% of the time.  This could be the result of scheduling each week the same way more often, cooks being at work exactly when scheduled more often, or some other reason.**
+
+- **Manager coverage is remarkably consistent with the shape of 2017.**
+
+- **Usage of Support Staff has increased, specifically at Thursday dinner, Friday lunch, and Saturday lunch. For each of these meals, the average has increased from 2 Support Staff to 3.**
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+#shows shape of SERVER without sales data overlaid
+
+week.facet(dataset =labor.agg, job.or.all = "SERVER", compare.sales = FALSE)
+
+```
+
+### Server compared with dollars (excluding outliers)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "SERVER", compare.sales = TRUE, dollars.checks.items = "dollars")
+
+```
+
+### Server compared with checks
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "SERVER", compare.sales = TRUE, dollars.checks.items = "checks")
+
+```
+
+## Cook
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+#shows shape of SERVER without sales data overlaid
+
+week.facet(dataset =labor.agg, job.or.all = "COOK", compare.sales = FALSE, dark.color = "#cb181d", light.color = "#fcae91")
+
+```
+
+### Cook compared with dollars (excluding outliers)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "COOK", compare.sales = TRUE, dollars.checks.items = "dollars", dark.color = "#cb181d", light.color = "#fcae91")
+
+```
+
+### Cook compared with checks
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "COOK", compare.sales = TRUE, dollars.checks.items = "items", dark.color = "#cb181d", light.color = "#fcae91")
+
+```
+
+## Manager
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+#shows shape of SERVER without sales data overlaid
+
+week.facet(dataset =labor.agg, job.or.all = "Manager", compare.sales = FALSE, dark.color = "#ae017e", light.color = "#fbb4b9")
+
+```
+
+### Manager compared with dollars (excluding outliers)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "Manager", compare.sales = TRUE, dollars.checks.items = "dollars", dark.color = "#ae017e", light.color = "#fbb4b9")
+
+```
+
+### Manager compared with checks
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "Manager", compare.sales = TRUE, dollars.checks.items = "checks", dark.color = "#ae017e", light.color = "#fbb4b9")
+
+```
+
+## Support Staff
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+#shows shape of SERVER without sales data overlaid
+
+week.facet(dataset =labor.agg, job.or.all = "SUPPORT STAFF", compare.sales = FALSE, dark.color = "#fecc5c", light.color = "#ffffb2")
+
+```
+
+### Support Staff compared with dollars (excluding outliers)
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "SUPPORT STAFF", compare.sales = TRUE, dollars.checks.items = "dollars", dark.color = "#fecc5c", light.color = "#ffffb2")
+
+```
+
+### Support Staff compared with checks
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=4, fig.width=7.7}
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+week.facet(dataset = labor.agg, job.or.all = "SUPPORT STAFF", compare.sales = TRUE, dollars.checks.items = "checks", dark.color = "#fecc5c", light.color = "#ffffb2")
+
+```

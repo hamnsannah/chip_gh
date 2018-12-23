@@ -1,0 +1,134 @@
+---
+title: 'Christopher''s: Exploratory Labor Analysis - To June 27, 2018'
+author: "Allocate Analytics"
+date: "July 17, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(sugrrants)
+library(knitr)
+library(lubridate)
+
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+
+labor.data <- read.csv("data/gndlbsum18.627.csv", stringsAsFactors = FALSE)
+
+dubdig <- function(x) if(nchar(x)==1){paste0(0,x)} else {x} #makes the column double digits
+labor.data$STARTHOUR <- sapply(labor.data$STARTHOUR, dubdig)
+labor.data$Date.Time <- as_datetime(paste0(labor.data$DOB, " ", labor.data$STARTHOUR,
+                                             ":00:00"))
+labor.data$Date <- as_date(labor.data$DOB)
+
+jobid.link <- read.csv("data/jobid.link.csv", stringsAsFactors = FALSE) # table with job names linked to IDs
+
+labor.merged <- merge(labor.data, jobid.link, 
+                      by.x = "JOBID", by.y = "ID", 
+                      all.x = TRUE, all.y = FALSE)
+labor.agg <- aggregate(MINUTES ~ Date.Time + Date + LONGNAME, labor.merged, sum)
+
+
+```
+
+This document shows some of my first attempts to explore and visualize the labor data.  The charts with the relative weight of each of the job types may be the most interesting. 
+
+## Labor Analysis for 2018 (Year To Date)
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#print(head(labor.agg, 10))
+
+labor.agg2 <- aggregate(MINUTES ~ LONGNAME, labor.agg, length)
+#print(dim(labor.agg2))
+labor.agg2 <- arrange(labor.agg2, desc(MINUTES))
+#kable(labor.agg2)
+
+labor.agg3 <- aggregate(MINUTES ~ LONGNAME, labor.agg, sum)
+labor.agg3$HOURS <- round(labor.agg3$MINUTES/60,1)
+labor.agg3$FT.WORKERS <- round(labor.agg3$HOURS/2000,1)
+labor.agg3 <- arrange(labor.agg3, desc(HOURS))
+labor.agg3$PERC <- paste0(round(labor.agg3$HOURS/sum(labor.agg3$HOURS)*100, 1),"%")
+
+#print(dim(labor.agg3))
+kable(labor.agg3)
+
+labor.cal <- labor.agg %>%
+  mutate("Hour" = as.integer(hour(Date.Time))) %>%
+  frame_calendar(x = Hour, y = MINUTES, date = Date, calendar = "monthly")
+#print("line 42")
+labor.plot <- ggplot(labor.cal) + 
+  geom_line(data = filter(labor.cal, LONGNAME == "COOK"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#0066ff") +
+  geom_line(data = filter(labor.cal, LONGNAME == "Manager"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#009900") +
+  geom_line(data = filter(labor.cal, LONGNAME == "SERVER"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#ff0000") +
+  geom_line(data = filter(labor.cal, LONGNAME == "HEAD SERVER"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = 1) +
+    geom_line(data = filter(labor.cal, LONGNAME == "BUSSER"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#ff0000") +
+    geom_line(data = filter(labor.cal, LONGNAME == "Expediter"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#ff0000") +
+    geom_line(data = filter(labor.cal, LONGNAME == "HOST"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#ff0000") +
+    geom_line(data = filter(labor.cal, LONGNAME == "SUPPORT STAFF"), 
+            aes(x = .Hour, y = .MINUTES, group = Date), color = "#ff0000") +
+  NULL
+prettify(labor.plot)
+  ##### The Manager one isn't working.  Is that the wrong job code to look for?  Use agg to see length of each job ID in the data
+#######
+
+```
+
+
+## Same chart but with each line on separate chart
+
+```{r echo=FALSE, fig.height= 25}
+brewed.palette <- c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", 
+                    "#80b1d3", "#fdb462", "#b3de69", "#fccde5", 
+                    "#d9d9d9", "#bc80bd", "#ccebc5", "#ffed6f")
+
+facet.cal <- labor.agg %>% 
+  mutate("Hour" = as.integer(hour(Date.Time))) %>%
+  group_by(LONGNAME) %>%
+  frame_calendar(x = Hour, y = MINUTES, date = Date, calendar = "monthly")
+facet.plot <- facet.cal %>%
+  ggplot(aes(x = .Hour, y = .MINUTES, group = Date)) +
+  geom_line(aes(color = LONGNAME)) +
+  facet_grid(LONGNAME ~ .) +
+  #scale_color_manual(values = brewed.palette) +
+  theme(legend.position = "bottom")+
+  theme_dark()
+prettify(facet.plot, label = NULL)
+
+
+```
+
+## Only Manager, Cook, Server, and Support Staff 
+
+These are 4 job types with the greatest total minutes in 2018 (year to date) excluding catering.
+
+```{r, echo=FALSE}
+
+labor.agg.top4 <- filter(labor.agg, LONGNAME %in% c("Manager", "COOK", "SERVER", "SUPPORT STAFF")) # excluding catering because so different from regular business
+
+facet.cal4 <- labor.agg.top4 %>% 
+  mutate("Hour" = as.integer(hour(Date.Time))) %>%
+  group_by(LONGNAME) %>%
+  frame_calendar(x = Hour, y = MINUTES, date = Date, calendar = "monthly")
+facet.plot4 <- facet.cal4 %>%
+  ggplot(aes(x = .Hour, y = .MINUTES, group = Date)) +
+  geom_line(aes(color = LONGNAME)) +
+  facet_grid(LONGNAME ~ .) +
+  #scale_color_manual(values = brewed.palette) +
+  theme(legend.position = "bottom")+
+  theme_dark()
+prettify(facet.plot4, label = NULL)
+
+
+

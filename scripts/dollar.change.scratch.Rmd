@@ -1,0 +1,78 @@
+---
+title: "Dollar Check (Scratch)"
+author: "Allocate Analytics"
+date: "September 3, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+### This Markdown file is meant to troubleshoot why the amount I'm getting for dollars is much larger, than Chip says he's getting
+
+library(foreign)
+library(dplyr)
+library(lubridate)
+library(knitr)
+
+import.rbind <- function(start.date, end.date, file.name){
+  wd <- getwd()
+  setwd("C://Users/The Pritchard family/Downloads/Aloha-Data-ALL/")
+  library(foreign)
+  start.date <- as.Date(start.date)
+  end.date <- as.Date(end.date)
+  date.vec <- seq.Date(start.date,end.date, by = "day")
+  file.vec <- gsub("-", "", date.vec)
+  fpath.prelim <- paste0(file.vec[1], "/", file.name)
+  imported.prelim <- read.dbf(fpath.prelim)
+  
+  agg.files <- imported.prelim
+  for(i in 2:length(file.vec)){
+    print(file.vec[i])
+    fpath <- paste0(file.vec[i], "/", file.name)
+    imported.i <- read.dbf(fpath)
+    agg.files <- rbind(agg.files, imported.i)
+  }
+  print(head(agg.files))
+  print(dim(agg.files))
+    #print(file.vec)
+setwd(wd)
+agg.files
+}
+
+sales.data <- import.rbind("2017-06-05", "2017-06-06", "GNDSALE.DBF")
+
+dubdig <- function(x) if(nchar(x)==1){paste0(0,x)} else {x} #makes the column double digits
+sales.data$ORDERHOUR <- sapply(sales.data$ORDERHOUR, dubdig)
+sales.data$ORDERMIN <- sapply(sales.data$ORDERMIN, dubdig)
+  
+sales.data$Date.Time <- as_datetime(paste0(sales.data$DOB, " ", sales.data$ORDERHOUR,
+                                               ":", sales.data$ORDERMIN, ":00"))
+sales.data$Date.Round <- floor_date(sales.data$Date.Time, unit = "hour")
+sales.data$Date <- as_date(sales.data$Date.Time)
+
+
+
+
+sales.data.jun5.noon <- filter(sales.data, Date.Round == "2017-06-05 08:00:00")
+
+```
+
+Below are 40 rows from the of the GNDSALE.DBF files for 6/5/2017.  
+
+```{r, echo=FALSE}
+#head(sales.data)
+#print("just noon")
+#head(sales.data.jun5.noon)
+#print(dim(sales.data.jun5.noon))
+jun5.narrow <- select(sales.data.jun5.noon, c(1:6,9:10,18))
+#sales.data <- read.csv("data/gndsale17.csv", stringsAsFactors = FALSE)
+#print(head(jun5.narrow, 100))
+kable(jun5.narrow)
+
+# Type 4 is total payment but that includes tips which shouldn't be counted.  They're paid right out to servers.
+# Type 10 is number of guests, the people
+# Type 31 is Net Sales.  I'm going to use this for dollars
+
+```
+

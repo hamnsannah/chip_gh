@@ -1,0 +1,119 @@
+---
+title: "Exploratory Sales Trends - Christophers"
+author: "Allocate Analytics"
+date: "July 10, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(dplyr)
+require(ggplot2)
+require(sugrrants)
+require(lubridate)
+require(knitr)
+require(scales)
+require(gridExtra)
+
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+
+annual.sales <- read.csv("data/gndsale17.csv", stringsAsFactors = FALSE)
+
+dubdig <- function(x) if(nchar(x)==1){paste0(0,x)} else {x} #makes the column double digits
+annual.sales$ORDERHOUR <- sapply(annual.sales$ORDERHOUR, dubdig)
+annual.sales$ORDERMIN <- sapply(annual.sales$ORDERMIN, dubdig)
+
+annual.sales$Date.Time <- as_datetime(paste0(annual.sales$DOB, " ", annual.sales$ORDERHOUR,
+                                             ":", annual.sales$ORDERMIN, ":00"))
+#<- as_datetime(annual.sales$DOB)
+
+annual.sales$Date.Round <- floor_date(annual.sales$Date.Time, unit = "hour")
+annual.sales$Date <- as_date(annual.sales$Date.Time)
+
+annual.sales.agg <- aggregate(AMOUNT ~ Date.Round + Date, annual.sales, sum)
+
+annual.sales.cal <- annual.sales.agg %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = AMOUNT, date = Date, calendar = "monthly")
+annual.plot <- annual.sales.cal %>%
+  ggplot(aes(x = .Hour, y = .AMOUNT, group = Date)) + geom_line()
+
+
+```
+
+### Original Calendar Plot from sales
+
+```{r chunk1, echo=FALSE}
+
+###### there are huge spikes when doing $ but maybe items or checks or even items could be good 
+#(probably checks)
+
+print(head(annual.sales))
+print(tail(annual.sales))
+prettify(annual.plot)
+annual.sales.agg <- arrange(annual.sales.agg, desc(AMOUNT))
+print(head(annual.sales.agg))
+#try removing 10am July 5 because it's an outlier
+# also 14:00 2016-02-06 has a weird check with $11K 4 different times
+```
+
+### Plot by $ Without Outliers
+
+```{r, by.transactions, echo=FALSE}
+
+#filter out the transactions that are largest 1% to remove outliers
+check.agg <- aggregate(AMOUNT ~ CHECK + DOB, annual.sales, sum)
+check.agg$TRANSACTIONID <- row.names(check.agg)
+print(head(check.agg))
+
+ninetyninth <- quantile(check.agg$AMOUNT, .99)
+print(ninetyninth)
+check.inliers <- filter(check.agg, AMOUNT < ninetyninth)
+print(dim(check.agg))
+print(max(check.agg$AMOUNT))
+print(dim(check.inliers))
+print(max(check.inliers$AMOUNT))
+print(head(check.inliers))
+
+#bring the inlier data set together with the original one
+inlier.merge <- merge(annual.sales, check.inliers[,-3], by.x = c("CHECK", "DOB"), by.y = c("CHECK", "DOB"), all.x = FALSE, all.y = TRUE)
+
+print(head(inlier.merge, 20))
+
+annual.sales.agg.inliers <- aggregate(AMOUNT ~ Date.Round + Date, inlier.merge, sum)
+
+#write.csv(annual.sales.agg.inliers, "data/sales.dollars.agg.16.csv", row.names = FALSE)
+
+annual.sales.cal.in <- annual.sales.agg.inliers %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = AMOUNT, date = Date, calendar = "monthly")
+annual.plot.in <- annual.sales.cal.in %>%
+  ggplot(aes(x = .Hour, y = .AMOUNT, group = Date)) + geom_line()
+prettify(annual.plot.in)
+# can use this to filter out outlier transactions from $ calcs.  99th% is probably good. 
+#...which is approx $2700 for 2016
+```
+
+### Plot showing volume based on checks
+
+```{r, echo=FALSE}
+
+### 1 create dataframe without duplicated check names within a day, maybe aggregate by amount by hour first, 
+### then use aggregate with length to generate the data I want
+### next convert it to the calendar format for sugrrant usage.
+# Remember the checks repeat each day I believe.
+
+annual.agg1 <- aggregate(AMOUNT ~ CHECK + Date.Round + Date, annual.sales, sum)
+annual.agg2 <- aggregate(CHECK ~ Date.Round + Date, annual.agg1, length)
+
+annual.sales.cal.check <- annual.agg2 %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = CHECK, date = Date, calendar = "monthly")
+annual.plot.check <- annual.sales.cal.check %>%
+  ggplot(aes(x = .Hour, y = .CHECK, group = Date)) + geom_line()
+prettify(annual.plot.check)
+```
+

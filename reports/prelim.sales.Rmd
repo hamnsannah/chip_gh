@@ -1,0 +1,162 @@
+---
+title: "Christopher's: Vizualizing Sales Through June 27, 2018"
+author: "Allocate Analytics"
+date: "July 25, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(dplyr)
+require(ggplot2)
+require(sugrrants)
+require(lubridate)
+require(knitr)
+require(scales)
+require(gridExtra)
+
+setwd("C://Users/The Pritchard family/Documents/R/christophers/")
+
+annual.sales <- read.csv("data/gndsale18.627.csv", stringsAsFactors = FALSE)
+
+dubdig <- function(x) if(nchar(x)==1){paste0(0,x)} else {x} #makes the column double digits
+annual.sales$ORDERHOUR <- sapply(annual.sales$ORDERHOUR, dubdig)
+annual.sales$ORDERMIN <- sapply(annual.sales$ORDERMIN, dubdig)
+
+annual.sales$Date.Time <- as_datetime(paste0(annual.sales$DOB, " ", annual.sales$ORDERHOUR,
+                                             ":", annual.sales$ORDERMIN, ":00"))
+#<- as_datetime(annual.sales$DOB)
+
+annual.sales$Date.Round <- floor_date(annual.sales$Date.Time, unit = "hour")
+annual.sales$Date <- as_date(annual.sales$Date.Time)
+
+annual.sales.agg <- aggregate(AMOUNT ~ Date.Round + Date, annual.sales, sum)
+
+annual.sales.cal <- annual.sales.agg %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = AMOUNT, date = Date, calendar = "monthly")
+annual.plot <- annual.sales.cal %>%
+  ggplot(aes(x = .Hour, y = .AMOUNT, group = Date)) + geom_line()
+
+
+```
+
+##### Headline: This document shows sales each hour each day of 2016.  It shows them in 3 ways: dollars, checks/tables, and items ordered.  Here are the largest takeaways from these charts:
+
+- **The biggest trend is the way sales change across a week, i.e. the way a Friday is different from a Thursday is more important than the difference between February and July.**
+
+- **Based on dollars, dinners are bigger, but based on the number of checks and on the number of items sold lunch is bigger.  To a server, the busy-ness might be measured based on tables per hour (checks).  To a cook, busy-ness might be measured by the number of individual items prepared.  And to a manager, busy-ness might be measured by $ per hour.**
+
+- **There are infrequent, large transactions that make most other hours look tiny.  I suspect these are catering orders but haven't found anything that distinguishes them that would allow them to be filtered out.**
+
+***
+\newpage
+
+## Original Calendar Plot from sales - Plot 1
+
+Some large transactions make certain hours throughout the year so large that everything looks flat.  This plot may be helpful in identifying when those huge days and hours are, but isn't helpful in seeing what the regular trends are.
+
+```{r chunk1, echo=FALSE}
+
+###### there are huge spikes when doing $ but maybe items or checks or even items could be good 
+#(probably checks)
+
+#print(head(annual.sales))
+#print(tail(annual.sales))
+prettify(annual.plot)
+annual.sales.agg <- arrange(annual.sales.agg, desc(AMOUNT))
+#print(head(annual.sales.agg))
+#try removing 10am July 5 because it's an outlier
+# also 14:00 2016-02-06 has a weird check with $11K 4 different times
+```
+
+\newpage
+
+## Plot by $ Without Outliers - Plot 2
+
+Plot 2 is the same as plot 1 except that the largest 1% of checks are removed.  
+
+```{r, by.transactions, echo=FALSE}
+
+#filter out the transactions that are largest 1% to remove outliers
+check.agg <- aggregate(AMOUNT ~ CHECK + DOB, annual.sales, sum)
+check.agg$TRANSACTIONID <- row.names(check.agg)
+#print(head(check.agg))
+
+ninetyninth <- quantile(check.agg$AMOUNT, .99)
+#print(ninetyninth)
+check.inliers <- filter(check.agg, AMOUNT < ninetyninth)
+#print(dim(check.agg))
+#print(max(check.agg$AMOUNT))
+#print(dim(check.inliers))
+#print(max(check.inliers$AMOUNT))
+#print(head(check.inliers))
+
+#bring the inlier data set together with the original one
+inlier.merge <- merge(annual.sales, check.inliers[,-3], by.x = c("CHECK", "DOB"), by.y = c("CHECK", "DOB"), all.x = FALSE, all.y = TRUE)
+
+#print(head(inlier.merge, 20))
+
+annual.sales.agg.inliers <- aggregate(AMOUNT ~ Date.Round + Date, inlier.merge, sum)
+
+annual.sales.cal.in <- annual.sales.agg.inliers %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = AMOUNT, date = Date, calendar = "monthly")
+annual.plot.in <- annual.sales.cal.in %>%
+  ggplot(aes(x = .Hour, y = .AMOUNT, group = Date)) + geom_line()
+prettify(annual.plot.in)
+# can use this to filter out outlier transactions from $ calcs.  99th% is probably good. 
+#...which is approx $2700 for 2016
+```
+
+\newpage
+
+## Plot showing volume based on checks - Plot 3
+
+This plot is based on how many checks were entered each hour regardless of the amount of the check.  
+
+- This shows that the vast majority of days have more checks entered during lunch than during dinner
+
+```{r, echo=FALSE}
+
+### 1 create dataframe without duplicated check names within a day, maybe aggregate by amount by hour first, 
+### then use aggregate with length to generate the data I want
+### next convert it to the calendar format for sugrrant usage.
+# Remember the checks repeat each day I believe.
+
+annual.agg1 <- aggregate(AMOUNT ~ CHECK + Date.Round + Date, annual.sales, sum)
+annual.agg2 <- aggregate(CHECK ~ Date.Round + Date, annual.agg1, length)
+
+annual.sales.cal.check <- annual.agg2 %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  frame_calendar(x = Hour, y = CHECK, date = Date, calendar = "monthly")
+annual.plot.check <- annual.sales.cal.check %>%
+  ggplot(aes(x = .Hour, y = .CHECK, group = Date)) + geom_line()
+prettify(annual.plot.check)
+```
+
+\newpage
+
+### Plot showing volume based on items sold - Plot 4
+
+This plot shows how many items were ordered by hour, and it largely follows the shape of Plot 3, based on number of checks.
+
+```{r items, echo = FALSE}
+#item.quantiles.16 <- read.csv("quants16items07-27-18", stringsAsFactors = FALSE)
+
+item.agg <- aggregate(TYPE ~ Date.Round + Date, annual.sales, length)
+
+
+item.agg.cal <- item.agg %>%
+  mutate("Hour" = as.integer(hour(Date.Round))) %>%
+  mutate(Item = TYPE) %>%
+  frame_calendar(x = Hour, y = Item, date = Date, calendar = "monthly")
+item.agg.plot <- item.agg.cal %>%
+  ggplot(aes(x = .Hour, y = .Item, group = Date)) + geom_line()
+prettify(item.agg.plot)
+
+
+```
